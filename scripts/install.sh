@@ -81,6 +81,7 @@ sudo mkdir -p \
   "${DATA_ROOT}/jellyfin/config" "${DATA_ROOT}/jellyfin/cache" \
   "${DATA_ROOT}/qbittorrent/config" \
   "${DATA_ROOT}/sonarr/config" \
+  "${DATA_ROOT}/prowlarr/config" \
   "${DATA_ROOT}/tailscale" \
   "${MEDIA_ROOT}/movies" "${MEDIA_ROOT}/tv" \
   "${DOWNLOADS_ROOT}"
@@ -104,6 +105,7 @@ cat <<EOF
   Jellyfin     -> http://localhost:8096
   qBittorrent  -> http://localhost:8080   (temp password: docker logs qbittorrent)
   Sonarr       -> http://localhost:8989
+  Prowlarr     -> http://localhost:9696
 
 Next:
   - Grab qBittorrent's first-run password:  docker logs qbittorrent | grep -i password

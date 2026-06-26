@@ -93,6 +93,30 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Prowlarr — indexer manager. You add indexers here; it syncs them to Sonarr
+  # so Sonarr can search automatically. Ships with NO indexers preconfigured —
+  # add only legal sources (public-domain / Creative-Commons / content you own).
+  # ---------------------------------------------------------------------------
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DATA_ROOT}/prowlarr/config:/config
+    ports:
+      - "9696:9696"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9696/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
   # Tailscale — private mesh VPN for remote access (no port-forwarding needed)
   # ---------------------------------------------------------------------------
   tailscale:

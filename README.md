@@ -7,9 +7,14 @@ port-forwarding.
 | Service | Port | What it does |
 |---|---|---|
 | **Jellyfin** | `8096` | Movie / TV library + streaming server |
-| **qBittorrent** | `8080`, `6881` | Download client *(no indexers — legal sources only)* |
-| **Sonarr** | `8989` | TV library manager *(no indexers — legal sources only)* |
+| **qBittorrent** | `8080`, `6881` | Download client |
+| **Sonarr** | `8989` | TV library manager + automation |
+| **Prowlarr** | `9696` | Indexer manager — feeds search sources to Sonarr |
 | **Tailscale** | — | Secure remote access (private mesh VPN) |
+
+> **Indexers:** Prowlarr ships with **none** preconfigured. You choose what to
+> add — use **legal sources only** (public-domain / Creative-Commons libraries,
+> content you own). See [Searching & downloading](#searching--downloading).
 
 Ad blocking is handled in-browser by **uBlock Origin in Firefox** (set up by the
 kiosk script). See [Ad blocking](#ad-blocking).
@@ -130,19 +135,44 @@ Copy `.env.example` to `.env` (the installer does this for you) and set:
    - **TV** → `/data/tv`
 3. Keep files as **1080p H.264** for direct play (see the transcoding note above).
 
-### qBittorrent (`http://<pi>:8080`) & Sonarr (`http://<pi>:8989`)
-General download/library tools, shipped **without any indexers** (and no
-Prowlarr). The typical flow:
+### Searching & downloading
+
+Once everything is wired up (one-time setup below), the loop is automatic:
 
 ```
-you add a (legal) link → qBittorrent downloads to /downloads
+add a show in Sonarr → Sonarr searches your Prowlarr indexers
+   → grabs a release → qBittorrent downloads to /downloads
    → Sonarr renames + files it into /tv → Jellyfin shows it
 ```
 
-To wire Sonarr to qBittorrent: in Sonarr go to *Settings → Download Clients →
-add qBittorrent*, host `qbittorrent` (the container name), port `8080`, with the
-username/password you set. Point Sonarr's TV root folder at `/tv`.
+**One-time wiring (do once, in this order):**
+
+1. **qBittorrent** (`http://<pi>:8080`) — get the temp password with
+   `docker logs qbittorrent | grep -i password`, log in, change it under
+   *Settings → Web UI*.
+
+2. **Prowlarr** (`http://<pi>:9696`) — set a login, then:
+   - *Indexers → Add Indexer* → add your **legal** sources (Prowlarr ships with
+     none). Public-domain / Creative-Commons libraries and content you own only.
+   - *Settings → Download Clients → add qBittorrent*: host `qbittorrent`, port
+     `8080`, your username/password.
+   - *Settings → Apps → add Sonarr*: Prowlarr URL `http://prowlarr:9696`, Sonarr
+     URL `http://sonarr:8989`, and paste Sonarr's API key (Sonarr →
+     *Settings → General → API Key*). Prowlarr now **pushes every indexer to
+     Sonarr automatically** — you never add indexers in Sonarr by hand.
+
+3. **Sonarr** (`http://<pi>:8989`) — *Settings → Download Clients → add
+   qBittorrent*: host `qbittorrent`, port `8080`, your username/password. Set the
+   TV root folder to `/tv`.
+
+**Daily use:** in Sonarr, *Series → Add New*, pick the show, choose root folder
+`/tv`, a **1080p** quality profile (keeps it direct-play), and Monitor. Sonarr
+searches the synced indexers, sends the best release to qBittorrent, and once
+it finishes, renames + files it into `/tv` where Jellyfin picks it up.
 **Use legal sources only.**
+
+> Want movies too? Add **Radarr** the same way (Prowlarr → Apps → Radarr) — see
+> the roadmap below.
 
 ### Tailscale — remote access from anywhere
 Once the `tailscale` container authenticates with your key, install Tailscale on
@@ -225,7 +255,7 @@ Each drops into `docker-compose.yml` as an additional service.
 
 ## Legal
 
-For **legal content only**. qBittorrent and Sonarr ship here **without any
-indexers** and there is **no Prowlarr** — there is intentionally no piracy
-pipeline in this project. Use it with media you own or content that is legally
-available.
+For **legal content only**. Prowlarr ships with **no indexers preconfigured** —
+which sources you add is entirely your choice and your responsibility. Use only
+legal sources: public-domain and Creative-Commons libraries, or content you own.
+Do not use this project to infringe copyright.
