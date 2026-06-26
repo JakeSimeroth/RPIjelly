@@ -1,0 +1,21 @@
+# Secrets / local config — never commit
+.env
+*.env
+!.env.example
+
+# Runtime data, if anyone points DATA_ROOT inside the repo by mistake
+data/
+config/
+downloads/
+media/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log

@@ -1,0 +1,149 @@
+# RPIjelly — Raspberry Pi 5 always-on Dockerized media server
+#
+# Services:
+#   jellyfin     8096        media server (designed for DIRECT PLAY, see README)
+#   pihole       53 + 8081   network-wide DNS ad/pop-up blocker
+#   qbittorrent  8080 + 6881 download client (NO indexers shipped)
+#   sonarr       8989        TV library manager (NO indexers shipped)
+#   tailscale    -           secure remote access (no port-forwarding / CGNAT-friendly)
+#
+# All host paths and secrets come from .env (copy .env.example -> .env first).
+
+services:
+  # ---------------------------------------------------------------------------
+  # Jellyfin — movie / TV library and streaming server
+  # ---------------------------------------------------------------------------
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      # Advertised LAN URL helps clients auto-discover the server.
+      - JELLYFIN_PublishedServerUrl=http://${HOST_LAN_IP:-localhost}:8096
+    volumes:
+      - ${DATA_ROOT}/jellyfin/config:/config
+      - ${DATA_ROOT}/jellyfin/cache:/cache
+      - ${MEDIA_ROOT}/movies:/data/movies
+      - ${MEDIA_ROOT}/tv:/data/tv
+    ports:
+      - "8096:8096"   # HTTP web UI / API
+      # - "8920:8920" # optional HTTPS (configure a cert in Jellyfin first)
+    devices:
+      # /dev/dri exposes the Pi 5 VideoCore for HEVC *decode* (Pi 5 has NO H.264
+      # hardware encoder — see README. Keep media as 1080p H.264 for direct play).
+      - /dev/dri:/dev/dri
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8096/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Pi-hole — network-wide DNS-based ad/tracker blocking
+  # ---------------------------------------------------------------------------
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    # Pi-hole needs to manipulate the network stack to serve DNS reliably.
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+    environment:
+      - TZ=${TZ}
+      # Pi-hole v6 web/API admin password.
+      - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
+      # Upstream resolvers (semicolon-separated).
+      - FTLCONF_dns_upstreams=${PIHOLE_DNS:-1.1.1.1;1.0.0.1}
+      # Listen to queries from the whole LAN, not just the local host.
+      - FTLCONF_dns_listeningMode=all
+    volumes:
+      - ${DATA_ROOT}/pihole/etc-pihole:/etc/pihole
+    ports:
+      - "53:53/tcp"     # DNS — free this from systemd-resolved (install.sh does it)
+      - "53:53/udp"
+      - "8081:80/tcp"   # admin UI -> http://<pi>:8081/admin
+    healthcheck:
+      test: ["CMD-SHELL", "dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # qBittorrent — download client (general tool; ships WITHOUT indexers)
+  # ---------------------------------------------------------------------------
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - ${DATA_ROOT}/qbittorrent/config:/config
+      - ${DOWNLOADS_ROOT}:/downloads
+    ports:
+      - "8080:8080"       # web UI (temp admin password: docker logs qbittorrent)
+      - "6881:6881/tcp"   # torrent traffic
+      - "6881:6881/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Sonarr — TV series library manager (general tool; ships WITHOUT indexers)
+  # ---------------------------------------------------------------------------
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DATA_ROOT}/sonarr/config:/config
+      - ${MEDIA_ROOT}/tv:/tv
+      - ${DOWNLOADS_ROOT}:/downloads
+    ports:
+      - "8989:8989"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8989/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Tailscale — private mesh VPN for remote access (no port-forwarding needed)
+  # ---------------------------------------------------------------------------
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-rpijelly}
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      # Advertise the LAN so remote devices can reach the Pi's services by IP,
+      # and accept routes other nodes advertise.
+      - TS_EXTRA_ARGS=--accept-routes --advertise-tags=tag:rpijelly
+      - TS_ROUTES=${TS_ADVERTISE_ROUTES:-}
+    volumes:
+      - ${DATA_ROOT}/tailscale:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
