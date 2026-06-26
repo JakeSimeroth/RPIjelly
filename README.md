@@ -1,29 +1,47 @@
 # RPIjelly 🍓📺
 
 A Dockerized, **always-on home media appliance for the Raspberry Pi 5**. Boots
-straight into Jellyfin, blocks ads network-wide, and is reachable securely from
-anywhere — no port-forwarding.
+straight into Jellyfin and is reachable securely from anywhere — no
+port-forwarding.
 
 | Service | Port | What it does |
 |---|---|---|
 | **Jellyfin** | `8096` | Movie / TV library + streaming server |
-| **Pi-hole** | `8081` (admin), `53` (DNS) | Network-wide ad / pop-up blocking |
 | **qBittorrent** | `8080`, `6881` | Download client *(no indexers — legal sources only)* |
 | **Sonarr** | `8989` | TV library manager *(no indexers — legal sources only)* |
 | **Tailscale** | — | Secure remote access (private mesh VPN) |
+
+Ad blocking is handled in-browser by **uBlock Origin in Firefox** (set up by the
+kiosk script). See [Ad blocking](#ad-blocking).
 
 ---
 
 ## Hardware
 
 - **Raspberry Pi 5** + official active cooler
-- **256 GB microSD** — *only* for the initial OS flash / recovery
-- **1–2 TB NVMe SSD + M.2 HAT** — **boot from this**
+- **256 GB microSD**
 
-> **Why boot from NVMe?** This stack writes constantly (databases, logs,
-> transcode cache). MicroSD cards wear out fast under that load. Booting from
-> the NVMe spares the card and is far faster. A USB HDD is only worth it at
-> 4 TB+; below that, NVMe wins on speed and reliability.
+### Storage plan
+
+**First implementation (now): everything on the 256 GB microSD.** Simple, works
+out of the box. Budget roughly **30–50 1080p movies** (or a few TV seasons)
+after the OS takes its share.
+
+**Upgrade later: add a 1–2 TB SSD.** You do **not** need an M.2 HAT for 1080p —
+storage speed is not the bottleneck for streaming. Two options:
+
+| Option | Need HAT? | Notes |
+|---|---|---|
+| **microSD boot + USB 3.0 SSD** | No | Plug into the Pi 5's blue USB-3 port. ~400 MB/s — plenty for 1080p, even several streams at once. Cheapest, simplest. |
+| **M.2 HAT + NVMe** | Yes | Tidiest (internal, no cable), fastest (~800+ MB/s), and you can *boot* from it to spare the SD card. Best long-term. |
+
+> **Why bother upgrading?** Capacity (256 GB fills fast) and **longevity** — this
+> stack writes constantly (databases, logs), and microSD cards wear out under
+> that load. When you add the SSD, point both `MEDIA_ROOT` *and* `DATA_ROOT`
+> (app data) at it: that gives you space *and* spares the card from the writes.
+
+To switch to the SSD: mount it (e.g. at `/mnt/ssd`), repoint the three `*_ROOT`
+paths in `.env` at it, and re-run `./scripts/install.sh`.
 
 ---
 
@@ -48,10 +66,10 @@ If you ever genuinely need heavy transcoding, the recommended upgrade is an
 ```bash
 git clone <this-repo> rpijelly && cd rpijelly
 
-# 1) First run: installs Docker, frees DNS port 53, creates folders + .env
+# 1) First run: installs Docker, creates folders + .env
 ./scripts/install.sh
 
-# 2) Edit your config (storage paths on the NVMe, passwords, Tailscale key)
+# 2) Edit your config (storage paths, Tailscale key)
 nano .env
 
 # 3) Second run: pulls images and brings the whole stack up
@@ -78,11 +96,9 @@ Copy `.env.example` to `.env` (the installer does this for you) and set:
 | `PUID` / `PGID` | Your user's IDs — run `id` (usually `1000` / `1000`) |
 | `TZ` | Your timezone, e.g. `America/Denver` |
 | `HOST_LAN_IP` | The Pi's LAN IP from `hostname -I` (optional, helps client discovery) |
-| `DATA_ROOT` | App configs/DBs on the NVMe, e.g. `/mnt/nvme/rpijelly` |
-| `MEDIA_ROOT` | Library root, e.g. `/mnt/nvme/media` (`movies/`, `tv/` auto-created) |
-| `DOWNLOADS_ROOT` | qBittorrent downloads, e.g. `/mnt/nvme/downloads` |
-| `PIHOLE_PASSWORD` | Admin password for the Pi-hole UI |
-| `PIHOLE_DNS` | Upstream resolvers (default Cloudflare `1.1.1.1;1.0.0.1`) |
+| `DATA_ROOT` | App configs/DBs, default `/srv/rpijelly` (microSD) |
+| `MEDIA_ROOT` | Library root, default `/srv/media` (`movies/`, `tv/` auto-created) |
+| `DOWNLOADS_ROOT` | qBittorrent downloads, default `/srv/downloads` |
 | `TAILSCALE_AUTHKEY` | Reusable key from the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys) |
 | `TS_HOSTNAME` | Name this Pi shows up as in your tailnet |
 
@@ -99,12 +115,6 @@ Copy `.env.example` to `.env` (the installer does this for you) and set:
   ```
   Log into `http://<pi>:8080`, then change it under *Settings → Web UI*.
 
-- **Pi-hole needs port 53.** On Raspberry Pi OS, `systemd-resolved` usually owns
-  port 53 and will block Pi-hole. `install.sh` detects this and disables the
-  stub listener automatically. If you ever start Pi-hole by hand and it fails to
-  bind `53`, that's the cause — re-run `./scripts/install.sh` or disable
-  `DNSStubListener` manually.
-
 - **`docker` permission denied on first install.** The installer adds you to the
   `docker` group, but group changes only apply after a fresh login. Log out/in
   (or reboot) and re-run the script.
@@ -120,15 +130,18 @@ Copy `.env.example` to `.env` (the installer does this for you) and set:
    - **TV** → `/data/tv`
 3. Keep files as **1080p H.264** for direct play (see the transcoding note above).
 
-### Pi-hole (`http://<pi>:8081/admin`)
-Log in with `PIHOLE_PASSWORD`. To actually block ads network-wide, point your
-**router's DNS** (or individual devices) at the Pi's LAN IP. Pi-hole stops ads
-at the DNS layer; **uBlock Origin in Firefox** handles in-page pop-ups and
-YouTube video ads that DNS can't catch.
-
 ### qBittorrent (`http://<pi>:8080`) & Sonarr (`http://<pi>:8989`)
 General download/library tools, shipped **without any indexers** (and no
-Prowlarr). Sonarr sees downloads at `/downloads` and your library at `/tv`.
+Prowlarr). The typical flow:
+
+```
+you add a (legal) link → qBittorrent downloads to /downloads
+   → Sonarr renames + files it into /tv → Jellyfin shows it
+```
+
+To wire Sonarr to qBittorrent: in Sonarr go to *Settings → Download Clients →
+add qBittorrent*, host `qbittorrent` (the container name), port `8080`, with the
+username/password you set. Point Sonarr's TV root folder at `/tv`.
 **Use legal sources only.**
 
 ### Tailscale — remote access from anywhere
@@ -141,6 +154,22 @@ paywalled remote streaming in 2025). Remote video quality is limited by your
 
 ---
 
+## Ad blocking
+
+Ads are blocked **in the browser with uBlock Origin in Firefox**, which the
+kiosk script force-installs. Use Firefox (not Chromium) for YouTube / web
+browsing — uBlock there blocks in-page pop-ups, cosmetic junk, and YouTube
+video ads.
+
+> Firefox is used deliberately — Chrome's **Manifest V3** crippled uBlock Origin.
+
+This build intentionally has **no Pi-hole** (no network-wide DNS blocking). If
+you later want ads blocked across every device on your network (phones, smart
+TVs, etc.), Pi-hole is the usual add-on — it can be reintroduced as another
+container.
+
+---
+
 ## The kiosk desktop
 
 `setup-kiosk.sh` configures:
@@ -149,7 +178,6 @@ paywalled remote streaming in 2025). Remote video quality is limited by your
 - **Chromium fullscreen on Jellyfin** at login. It uses `--start-fullscreen`
   **(not `--kiosk`)** *on purpose* so **Alt+Tab** to Firefox still works.
 - **Firefox + uBlock Origin** (force-installed via Firefox enterprise policy).
-  Firefox is used deliberately — Chrome's **Manifest V3** crippled uBlock Origin.
 
 Switch apps with **Alt+Tab**; leave Chromium fullscreen with **F11**.
 
@@ -163,12 +191,12 @@ Switch apps with **Alt+Tab**; leave Chromium fullscreen with **F11**.
 
 Leave it on — power draw is roughly **$7–13/year**. A few tips:
 
-- **Spin down an external HDD** (if you add one) with
-  [`hd-idle`](https://github.com/adelolmo/hd-idle) to save power and noise.
 - **Clean shutdown** any time with the **Pi 5's onboard power button** (single
   press → graceful shutdown).
-- All app data lives under `DATA_ROOT` on the NVMe, so containers are
-  disposable — `docker compose pull && docker compose up -d` upgrades in place.
+- **Spin down an external HDD** (if you ever add one) with
+  [`hd-idle`](https://github.com/adelolmo/hd-idle) to save power and noise.
+- All app data lives under `DATA_ROOT`, so containers are disposable —
+  `docker compose pull && docker compose up -d` upgrades in place.
 
 ---
 
@@ -178,7 +206,7 @@ Leave it on — power draw is roughly **$7–13/year**. A few tips:
 docker compose ps                 # status of all services
 docker compose logs -f jellyfin   # follow one service's logs
 docker compose pull && docker compose up -d   # update everything
-docker compose restart pihole     # restart a single service
+docker compose restart sonarr     # restart a single service
 docker compose down               # stop the stack (data is preserved)
 ```
 
@@ -188,8 +216,10 @@ docker compose down               # stop the stack (data is preserved)
 
 - **Radarr** — movie library manager (the film counterpart to Sonarr).
 - **Jellyseerr** — a friendly "request a title" UI in front of Sonarr/Radarr.
+- **Pi-hole** — network-wide DNS ad blocking, if you want coverage beyond the
+  browser.
 
-Both drop into `docker-compose.yml` as additional services when you want them.
+Each drops into `docker-compose.yml` as an additional service.
 
 ---
 

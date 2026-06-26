@@ -47,32 +47,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 # =============================================================================
-# 2. Free up port 53 (Pi-hole needs it; systemd-resolved usually holds it)
-# =============================================================================
-if sudo ss -lntup 2>/dev/null | grep -q ':53 '; then
-  if systemctl is-active --quiet systemd-resolved; then
-    info "Port 53 is held by systemd-resolved — disabling its DNS stub listener…"
-    sudo mkdir -p /etc/systemd/resolved.conf.d
-    sudo tee /etc/systemd/resolved.conf.d/rpijelly.conf >/dev/null <<'EOF'
-# Managed by RPIjelly — let Pi-hole own port 53.
-[Resolve]
-DNSStubListener=no
-EOF
-    # Point the host's own resolver at a real upstream while Pi-hole starts.
-    if [[ -L /etc/resolv.conf || -f /etc/resolv.conf ]]; then
-      sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null || true
-    fi
-    sudo systemctl restart systemd-resolved
-    info "systemd-resolved stub listener disabled."
-  else
-    warn "Something other than systemd-resolved is using port 53. Free it before starting Pi-hole."
-  fi
-else
-  info "Port 53 is free."
-fi
-
-# =============================================================================
-# 3. .env — create from template on first run, then stop and ask for edits
+# 2. .env — create from template on first run, then stop and ask for edits
 # =============================================================================
 if [[ ! -f .env ]]; then
   cp .env.example .env
@@ -80,8 +55,7 @@ if [[ ! -f .env ]]; then
   echo
   warn "ACTION NEEDED — edit .env before continuing:"
   warn "    nano ${REPO_DIR}/.env"
-  warn "Set at least: PUID/PGID, TZ, the *_ROOT storage paths (on your NVMe),"
-  warn "PIHOLE_PASSWORD, and TAILSCALE_AUTHKEY."
+  warn "Set at least: PUID/PGID, TZ, the *_ROOT storage paths, and TAILSCALE_AUTHKEY."
   echo
   info "When done, run this script again to bring the stack up."
   exit 0
@@ -91,20 +65,20 @@ fi
 set -a; # shellcheck disable=SC1091
 source .env; set +a
 
-# Guard against leaving placeholder secrets in place.
-if [[ "${PIHOLE_PASSWORD:-}" == "changeme" || "${TAILSCALE_AUTHKEY:-}" == tskey-auth-xxxxxxxxxxxx ]]; then
-  warn "It looks like .env still has placeholder values (PIHOLE_PASSWORD / TAILSCALE_AUTHKEY)."
-  read -r -p "Continue anyway? [y/N] " ans
+# Guard against leaving the placeholder auth key in place.
+if [[ "${TAILSCALE_AUTHKEY:-}" == tskey-auth-xxxxxxxxxxxx ]]; then
+  warn "It looks like .env still has the placeholder TAILSCALE_AUTHKEY."
+  read -r -p "Continue anyway (Tailscale won't connect)? [y/N] " ans
   [[ "${ans,,}" == "y" ]] || { info "Edit .env, then re-run."; exit 0; }
 fi
 
 # =============================================================================
-# 4. Create storage folders on the NVMe
+# 3. Create storage folders
 # =============================================================================
 info "Creating data directories…"
-mkdir -p \
+# Use sudo: the parent dirs (e.g. /srv or an SSD mount) are usually root-owned.
+sudo mkdir -p \
   "${DATA_ROOT}/jellyfin/config" "${DATA_ROOT}/jellyfin/cache" \
-  "${DATA_ROOT}/pihole/etc-pihole" \
   "${DATA_ROOT}/qbittorrent/config" \
   "${DATA_ROOT}/sonarr/config" \
   "${DATA_ROOT}/tailscale" \
@@ -112,11 +86,11 @@ mkdir -p \
   "${DOWNLOADS_ROOT}"
 
 # Make sure the PUID/PGID user owns what the containers will write to.
-sudo chown -R "${PUID}:${PGID}" "${DATA_ROOT}" "${MEDIA_ROOT}" "${DOWNLOADS_ROOT}" 2>/dev/null || \
+sudo chown -R "${PUID}:${PGID}" "${DATA_ROOT}" "${MEDIA_ROOT}" "${DOWNLOADS_ROOT}" || \
   warn "Could not chown storage paths — check permissions if containers fail to write."
 
 # =============================================================================
-# 5. Bring the stack up
+# 4. Bring the stack up
 # =============================================================================
 info "Pulling images (this can take a while on first run)…"
 docker compose pull
@@ -128,7 +102,6 @@ echo
 info "Stack is up. Services:"
 cat <<EOF
   Jellyfin     -> http://localhost:8096
-  Pi-hole      -> http://localhost:8081/admin
   qBittorrent  -> http://localhost:8080   (temp password: docker logs qbittorrent)
   Sonarr       -> http://localhost:8989
 

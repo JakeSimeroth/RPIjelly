@@ -2,7 +2,6 @@
 #
 # Services:
 #   jellyfin     8096        media server (designed for DIRECT PLAY, see README)
-#   pihole       53 + 8081   network-wide DNS ad/pop-up blocker
 #   qbittorrent  8080 + 6881 download client (NO indexers shipped)
 #   sonarr       8989        TV library manager (NO indexers shipped)
 #   tailscale    -           secure remote access (no port-forwarding / CGNAT-friendly)
@@ -41,38 +40,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-  # ---------------------------------------------------------------------------
-  # Pi-hole — network-wide DNS-based ad/tracker blocking
-  # ---------------------------------------------------------------------------
-  pihole:
-    image: pihole/pihole:latest
-    container_name: pihole
-    restart: unless-stopped
-    # Pi-hole needs to manipulate the network stack to serve DNS reliably.
-    cap_add:
-      - NET_ADMIN
-      - SYS_TIME
-    environment:
-      - TZ=${TZ}
-      # Pi-hole v6 web/API admin password.
-      - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
-      # Upstream resolvers (semicolon-separated).
-      - FTLCONF_dns_upstreams=${PIHOLE_DNS:-1.1.1.1;1.0.0.1}
-      # Listen to queries from the whole LAN, not just the local host.
-      - FTLCONF_dns_listeningMode=all
-    volumes:
-      - ${DATA_ROOT}/pihole/etc-pihole:/etc/pihole
-    ports:
-      - "53:53/tcp"     # DNS — free this from systemd-resolved (install.sh does it)
-      - "53:53/udp"
-      - "8081:80/tcp"   # admin UI -> http://<pi>:8081/admin
-    healthcheck:
-      test: ["CMD-SHELL", "dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # qBittorrent — download client (general tool; ships WITHOUT indexers)
@@ -136,9 +103,10 @@ services:
     environment:
       - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
-      # Advertise the LAN so remote devices can reach the Pi's services by IP,
-      # and accept routes other nodes advertise.
-      - TS_EXTRA_ARGS=--accept-routes --advertise-tags=tag:rpijelly
+      # Accept routes other nodes advertise. (No --advertise-tags here on purpose:
+      # advertising an undefined tag makes `tailscale up` fail. Add tags only if
+      # you've defined them in your tailnet ACLs.)
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---accept-routes}
       - TS_ROUTES=${TS_ADVERTISE_ROUTES:-}
     volumes:
       - ${DATA_ROOT}/tailscale:/var/lib/tailscale

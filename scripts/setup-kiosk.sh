@@ -8,8 +8,8 @@
 #   * Installs Firefox with uBlock Origin force-installed — use it for YouTube /
 #     Google. (Firefox, because Chrome's Manifest V3 crippled uBlock Origin.)
 #
-# Switch apps with Alt+Tab. Pi-hole handles network-wide ads; uBlock in Firefox
-# handles in-page pop-ups and YouTube video ads.
+# Switch apps with Alt+Tab. uBlock Origin in Firefox handles in-page pop-ups and
+# YouTube video ads.
 #
 # Target: Raspberry Pi OS (Bookworm) on a Pi 5 — labwc/Wayland by default.
 # Run after the Docker stack is up, then reboot.
